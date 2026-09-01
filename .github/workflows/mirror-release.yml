@@ -1,0 +1,129 @@
+# Copy an upstream release asset here, BYTE FOR BYTE, under the upstream tag.
+#
+# WHY MIRROR RATHER THAN REBUILD. Rebuilding an upstream tag through the build workflow
+# would produce a binary compiled here, which is a different artefact from the one
+# upstream published and signed off. Mirroring keeps the bytes a consumer installs
+# identical to the bytes upstream released, so pointing a consumer at this repository
+# does not change what it runs -- only where it fetches from.
+#
+# THE ASSET IS VERIFIED AGAINST UPSTREAM'S OWN CHECKSUM BEFORE IT IS REPUBLISHED, and
+# then the published release is verified again. A mirror that silently republishes a
+# corrupted download is worse than no mirror: it launders a bad artefact through a source
+# the consumer has been told to trust.
+
+name: mirror-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream release tag to mirror. Leave as 'latest' for the newest."
+        required: false
+        default: latest
+      upstream:
+        description: "Upstream repository."
+        required: false
+        default: coleam00/Archon
+
+concurrency:
+  group: mirror-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Resolve the upstream tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.tag }}" = "latest" ]; then
+            tag=$(curl -fsSL "https://api.github.com/repos/${{ inputs.upstream }}/releases/latest" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+          else
+            tag="${{ inputs.tag }}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::could not resolve an upstream tag" >&2; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "mirroring ${{ inputs.upstream }} $tag"
+
+      - name: Refuse if this tag is already mirrored
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # An existing release is left alone rather than replaced. Re-mirroring a tag whose
+        # bytes a consumer may already have installed would change what a recorded
+        # checksum refers to.
+        run: |
+          set -euo pipefail
+          if gh release view "${{ steps.resolve.outputs.tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::${{ steps.resolve.outputs.tag }} is already published here; refusing to replace it" >&2
+            exit 1
+          fi
+
+      - name: Download the asset and upstream's own checksum
+        id: fetch
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out" && cd "$RUNNER_TEMP/out"
+          base="https://github.com/${{ inputs.upstream }}/releases/download/${{ steps.resolve.outputs.tag }}"
+          curl -fsSL -o archon-linux-x64 "$base/archon-linux-x64"
+          curl -fsSL -o upstream-checksums.txt "$base/checksums.txt"
+          want=$(grep ' archon-linux-x64$' upstream-checksums.txt | cut -d' ' -f1 | head -n1)
+          if [ -z "$want" ]; then
+            echo "::error::upstream checksums.txt carries no line for archon-linux-x64; refusing to mirror an unverifiable asset" >&2
+            exit 1
+          fi
+          got=$(sha256sum archon-linux-x64 | cut -d' ' -f1)
+          if [ "$got" != "$want" ]; then
+            echo "::error::download does not match upstream's published checksum: want $want, got $got" >&2
+            exit 1
+          fi
+          printf '%s  archon-linux-x64\n' "$got" > checksums.txt
+          echo "sha256=$got" >> "$GITHUB_OUTPUT"
+          echo "verified against upstream: $got"
+
+      - name: Write the provenance record
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/out"
+          cat > provenance.json <<JSON
+          {
+            "kind": "release-mirror",
+            "repo": "${{ inputs.upstream }}",
+            "ref": "${{ steps.resolve.outputs.tag }}",
+            "asset": "archon-linux-x64",
+            "sha256": "${{ steps.fetch.outputs.sha256 }}",
+            "mirrored_by": "${{ github.repository }} mirror-release #${{ github.run_number }}",
+            "note": "byte-identical copy of the upstream release asset; not rebuilt"
+          }
+          JSON
+          cat provenance.json
+
+      - name: Publish the mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/out"
+          notes=$(printf '%s\n\n%s\n%s\n\n%s\n' "Byte-identical mirror of ${{ inputs.upstream }} ${{ steps.resolve.outputs.tag }}." "kind: release-mirror" "sha256: ${{ steps.fetch.outputs.sha256 }}" "Binaries and nothing else -- see the repository README.")
+          gh release create "${{ steps.resolve.outputs.tag }}" --repo "${{ github.repository }}" --title "${{ steps.resolve.outputs.tag }}" --notes "$notes" archon-linux-x64 checksums.txt provenance.json
+
+      - name: Confirm the published mirror is byte-identical to upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v=$(mktemp -d); cd "$v"
+          gh release download "${{ steps.resolve.outputs.tag }}" --repo "${{ github.repository }}" --pattern 'archon-linux-x64' --pattern 'checksums.txt'
+          sha256sum -c checksums.txt
+          got=$(sha256sum archon-linux-x64 | cut -d' ' -f1)
+          if [ "$got" != "${{ steps.fetch.outputs.sha256 }}" ]; then
+            echo "::error::the published mirror serves $got but upstream published ${{ steps.fetch.outputs.sha256 }}" >&2
+            exit 1
+          fi
+          echo "mirror verified byte-identical to upstream: $got"
