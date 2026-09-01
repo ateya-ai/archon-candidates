@@ -2,9 +2,18 @@
 
 Compiled `archon` binaries, published as releases, for one machine to fetch.
 
-**This repository holds binaries and nothing else.** No source, no configuration, no
-notes about the system that consumes it, no issue history. Its entire content is release
-entries, each carrying `archon-linux-x64`, `checksums.txt` and `provenance.json`.
+**This repository holds binaries, the workflow that builds them, and nothing else.** No
+notes about the system that consumes them, no configuration of it, no issue history.
+
+The rule was written as *binaries and nothing else* and is amended here rather than
+quietly stretched. The build workflow lives in this repository so that it can publish
+with the automatic, repository-scoped `GITHUB_TOKEN`; the alternative was a personal
+access token held elsewhere, and **not needing a credential is better than scoping one**.
+
+The amendment is narrow, and the test it has to pass is *not* "is it small" but **"is it
+worth reading?"** — the workflow describes how to build a public upstream and nothing
+about what consumes the result. That was checked, not assumed: it names no host, no
+scheduler, no consumer, and no design decision of the system that fetches from here.
 
 ## Why it is public, and why that is safe
 
@@ -19,13 +28,19 @@ public. Nothing secret is published by publishing them.
 
 ## The rule, and it is a rule rather than a preference
 
-**Do not add a second kind of thing here.**
+**Do not add a third kind of thing here, and do not let the workflow grow a second job.**
 
 The reason this repository is safe to be public is that there is nothing in it worth
-reading. A README explaining the system that consumes it, a workflow that "just" does one
-more thing, a note about a host — each is individually harmless and collectively turns an
-artifact store into a description of an architecture. Nothing enforces this but the person
-reading it, which is why it is written down.
+reading. A README explaining the system that consumes it, a workflow step that "just"
+does one more thing, a note about a host — each is individually harmless and collectively
+turns an artifact store into a description of an architecture.
+
+The build workflow is the one exception, and it earns it by being **about the upstream
+project only**. A change to it that mentions the consumer — a host, a schedule, a path it
+writes to, why a particular version is wanted — is the thing this rule exists to stop,
+even though the workflow itself is allowed.
+
+Nothing enforces any of this but the person reading it, which is why it is written down.
 
 ## What a release contains
 
