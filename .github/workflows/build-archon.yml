@@ -196,8 +196,14 @@ jobs:
             *) echo "::error::the built binary did not report a version; refusing to guess one" >&2; exit 1 ;;
           esac
           # Committer date of the RESOLVED commit, digits only so sort -V compares it numerically.
-          raw=$(git show -s --format=%cI "${{ steps.resolve.outputs.sha }}" | tr -d ':-')
-          cdate=$(printf '%s' "${raw%%+*}" | cut -c1-13)
+          # FORCED TO UTC, and that is the whole point of this line. `%cI` renders the
+          # committer's LOCAL offset -- measured: commit 3148914c is 18:37:41Z but
+          # renders as 13:37:41-05:00, so the naive form produced a tag five hours
+          # early. An ordering key that depends on the committer's timezone can sort
+          # two commits into the wrong order, which is the exact failure the date was
+          # added to prevent. `format-local` with TZ=UTC renders in UTC for every
+          # commit regardless of where it was made.
+          cdate=$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%dT%H%M "${{ steps.resolve.outputs.sha }}")
           tag="v${reported}-dev.${cdate}.${{ steps.resolve.outputs.short }}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "candidate tag: $tag"
