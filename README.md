@@ -72,3 +72,28 @@ scheme is built around **measured** `sort -V` behaviour rather than around semve
 - A dev build reports the **last** release's version, so `v0.10.1-dev.…` is both correctly
   ordered and honest: 0.10.1 plus commits.
 - The committer date is there because a bare SHA sorts **lexically, not chronologically**.
+
+## Reproducibility, measured rather than claimed
+
+**The web dist is byte-reproducible. The binary is not.** Both were measured on 2026-09-01
+by building commit `3148914c` three times, twice in this repository and once elsewhere:
+
+| | result |
+|---|---|
+| `archon-web.tar.gz` | `7bf777e1…` in **every** build, including across repositories |
+| `archon-linux-x64` | identical between two builds **in this repository**; **different** from a build of the same commit made elsewhere |
+
+So the deterministic `tar` flags do their job, and something in the binary compile does not.
+The likely cause is the build path — a runner checks out to
+`/home/runner/work/<repo>/<repo>/…`, so the repository name is part of the path, and
+`bun build --compile` is known to embed paths. **That is a plausible explanation, not a
+confirmed one**, and it is written as such.
+
+Two consequences worth stating plainly:
+
+- **A checksum here cannot be independently reproduced** by rebuilding the same commit
+  somewhere else. `provenance.json` identifies the source precisely enough to *rebuild*,
+  which is not the same as precisely enough to *get the same bytes*. Verify a download
+  against `checksums.txt`; do not expect your own rebuild to match it.
+- Builds should stay comparable as long as they keep happening here, which is now the
+  only place they happen.
